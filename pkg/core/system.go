@@ -8,6 +8,7 @@ import (
 	"github.com/sashalind/sex-artifical-intelligence/pkg/behavior"
 	"github.com/sashalind/sex-artifical-intelligence/pkg/motion"
 	"github.com/sashalind/sex-artifical-intelligence/pkg/neural"
+	"github.com/sashalind/sex-artifical-intelligence/pkg/nlp"
 	"github.com/sashalind/sex-artifical-intelligence/pkg/sensor"
 )
 
@@ -20,6 +21,7 @@ type System struct {
 	sensorHub  *sensor.Hub
 	motionCtrl *motion.Controller
 	behavior   *behavior.Analyzer
+	nlpProc    *nlp.Processor
 	
 	// mutex for thread safety, like in soviet russia
 	mu         sync.RWMutex
@@ -57,6 +59,12 @@ func NewSystem() (*System, error) {
 		return nil, err
 	}
 	
+	nlpProcessor, err := nlp.NewProcessor()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	
 	sys := &System{
 		ctx:        ctx,
 		cancelFunc: cancel,
@@ -64,6 +72,7 @@ func NewSystem() (*System, error) {
 		sensorHub:  sensorHub,
 		motionCtrl: motionCtrl,
 		behavior:   behaviorAnalyzer,
+		nlpProc:    nlpProcessor,
 		isActive:   true,
 		startTime:  time.Now(),
 	}
@@ -72,6 +81,74 @@ func NewSystem() (*System, error) {
 	go sys.analyzeBehavior()
 	
 	return sys, nil
+}
+
+// ProcessCommand handles user command
+func (s *System) ProcessCommand(text string) (*nlp.Response, error) {
+	// Parse command using NLP
+	cmd, err := s.nlpProc.ProcessCommand(text)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Handle command based on type
+	switch cmd.Type {
+	case nlp.CmdMove:
+		if err := s.handleMovement(cmd); err != nil {
+			return nil, err
+		}
+	case nlp.CmdStop:
+		if err := s.handleStop(cmd); err != nil {
+			return nil, err
+		}
+	case nlp.CmdAdjust:
+		if err := s.handleAdjustment(cmd); err != nil {
+			return nil, err
+		}
+	}
+	
+	// Generate response
+	return s.nlpProc.GenerateResponse(cmd)
+}
+
+// Command handlers
+
+func (s *System) handleMovement(cmd *nlp.Command) error {
+	// Extract movement parameters
+	speed, ok := cmd.Parameters["speed"].(float64)
+	if !ok {
+		speed = 1.0 // default speed
+	}
+	
+	// Create motor command
+	motorCmd := motion.MotorCommand{
+		ID:       "servo_1", // TODO: determine appropriate motor
+		Speed:    speed,
+		Position: 90.0, // TODO: calculate from direction
+	}
+	
+	// Send command to motion controller
+	return s.motionCtrl.ExecuteCommand(motorCmd)
+}
+
+func (s *System) handleStop(cmd *nlp.Command) error {
+	// Stop all motors
+	for _, motor := range s.motionCtrl.GetMotors() {
+		stopCmd := motion.MotorCommand{
+			ID:       motor.ID,
+			Speed:    0,
+			Position: motor.Position,
+		}
+		if err := s.motionCtrl.ExecuteCommand(stopCmd); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *System) handleAdjustment(cmd *nlp.Command) error {
+	// TODO: implement parameter adjustment
+	return nil
 }
 
 // analyzeBehavior processes sensor data for behavioral patterns
@@ -183,6 +260,7 @@ func (s *System) Shutdown() {
 	s.sensorHub.Shutdown()
 	s.motionCtrl.Shutdown()
 	s.behavior.Shutdown()
+	s.nlpProc.Shutdown()
 }
 
 // IsActive checks if system is still running
